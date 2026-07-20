@@ -1,0 +1,9 @@
+name,address,type,access,unit,description
+grid_voltage,0,uint16,ro,V,Grid phase voltage x0.1
+grid_current,1,uint16,ro,A,Grid current x0.01
+active_power,2,int32,ro,W,Instantaneous active power
+energy_total,4,uint32,ro,kWh,Cumulative energy x0.01
+device_temp,8,int16,ro,degC,Heatsink temperature
+relay_state,16,uint16,rw,,Relay output bitmask
+setpoint_power,17,int32,rw,W,Active power setpoint
+baud_rate,20,uint16,rw,bps,UART baud selector index
