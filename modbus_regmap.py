@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 #: register width (number of 16-bit registers) per data type
 TYPE_WIDTHS = {
@@ -199,6 +199,126 @@ class RegisterMap:
 
 
 # ---------------------------------------------------------------------- #
+# diffing
+# ---------------------------------------------------------------------- #
+#: fields compared when deciding whether a register changed between maps
+DIFF_FIELDS = ["address", "type", "access", "unit", "description"]
+
+
+@dataclass
+class RegisterChange:
+    """A register present in both maps but with different field values."""
+
+    name: str
+    before: Register
+    after: Register
+    fields: List[str]  # human-readable entries like "address: 3 -> 4"
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "before": self.before.to_dict(),
+            "after": self.after.to_dict(),
+            "changes": self.fields,
+        }
+
+
+@dataclass
+class MapDiff:
+    """Result of comparing two register maps (old -> new)."""
+
+    added: List[Register] = field(default_factory=list)
+    removed: List[Register] = field(default_factory=list)
+    changed: List[RegisterChange] = field(default_factory=list)
+    unchanged: int = 0
+
+    @property
+    def identical(self) -> bool:
+        return not (self.added or self.removed or self.changed)
+
+    def to_dict(self) -> dict:
+        return {
+            "identical": self.identical,
+            "added": [r.to_dict() for r in self.added],
+            "removed": [r.to_dict() for r in self.removed],
+            "changed": [c.to_dict() for c in self.changed],
+            "unchanged": self.unchanged,
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
+
+    def to_text(self) -> str:
+        def fmt(reg: Register) -> str:
+            unit = f", {reg.unit}" if reg.unit else ""
+            return f"{reg.name} @ {reg.address} ({reg.type}, {reg.access}{unit})"
+
+        out = io.StringIO()
+        if self.identical:
+            out.write(f"no differences ({self.unchanged} registers identical)\n")
+            return out.getvalue()
+        if self.added:
+            out.write(f"added ({len(self.added)}):\n")
+            for reg in sorted(self.added, key=lambda r: r.address):
+                out.write(f"  + {fmt(reg)}\n")
+        if self.removed:
+            out.write(f"removed ({len(self.removed)}):\n")
+            for reg in sorted(self.removed, key=lambda r: r.address):
+                out.write(f"  - {fmt(reg)}\n")
+        if self.changed:
+            out.write(f"changed ({len(self.changed)}):\n")
+            for chg in sorted(self.changed, key=lambda c: c.after.address):
+                out.write(
+                    f"  ~ {chg.name} @ {chg.after.address}: "
+                    f"{'; '.join(chg.fields)}\n"
+                )
+        out.write(f"unchanged: {self.unchanged}\n")
+        return out.getvalue()
+
+
+def diff_maps(old: RegisterMap, new: RegisterMap) -> MapDiff:
+    """Compare two register maps by register name.
+
+    A register found only in *new* counts as added, only in *old* as
+    removed, and present in both with different field values as changed.
+    Duplicate names (already flagged by validate()) match pairwise in
+    CSV order so the diff still behaves sensibly on invalid maps.
+    """
+    diff = MapDiff()
+    new_by_name: dict = {}
+    for reg in new.registers:
+        new_by_name.setdefault(reg.name, []).append(reg)
+
+    for old_reg in old.registers:
+        candidates = new_by_name.get(old_reg.name)
+        if not candidates:
+            diff.removed.append(old_reg)
+            continue
+        new_reg = candidates.pop(0)  # pairwise match for duplicate names
+        changes = []
+        for field_name in DIFF_FIELDS:
+            old_val = getattr(old_reg, field_name)
+            new_val = getattr(new_reg, field_name)
+            if old_val != new_val:
+                changes.append(f"{field_name}: {old_val} -> {new_val}")
+        if changes:
+            diff.changed.append(
+                RegisterChange(
+                    name=old_reg.name,
+                    before=old_reg,
+                    after=new_reg,
+                    fields=changes,
+                )
+            )
+        else:
+            diff.unchanged += 1
+
+    for leftover in new_by_name.values():
+        diff.added.extend(leftover)
+    return diff
+
+
+# ---------------------------------------------------------------------- #
 # loading
 # ---------------------------------------------------------------------- #
 def load_register_map(path: str | Path) -> RegisterMap:
@@ -298,11 +418,29 @@ def build_parser() -> argparse.ArgumentParser:
     add_csv_arg(p_doc)
     p_doc.add_argument("-o", "--output", help="write to file instead of stdout")
     p_doc.add_argument("--title", default="Modbus Register Map", help="document title")
+
+    p_diff = sub.add_parser("diff", help="compare two register maps (old vs new)")
+    p_diff.add_argument("old_csv", help="path to the old/base register map CSV")
+    p_diff.add_argument("new_csv", help="path to the new register map CSV")
+    p_diff.add_argument(
+        "--json",
+        action="store_true",
+        help="print the diff as JSON instead of plain text",
+    )
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "diff":
+        old_map = _load_or_exit(args.old_csv)
+        new_map = _load_or_exit(args.new_csv)
+        diff = diff_maps(old_map, new_map)
+        output = diff.to_json() if args.json else diff.to_text()
+        print(output, end="" if output.endswith("\n") else "\n")
+        return 0 if diff.identical else 1
+
     regmap = _load_or_exit(args.csv)
 
     if args.command == "validate":

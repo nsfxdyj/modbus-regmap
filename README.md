@@ -11,7 +11,9 @@ lets you keep that table as a single CSV file under version control, then:
   MQTT/Modbus bridges;
 - **generate a C header** — drop ready-to-use `#define`s into firmware;
 - **generate Markdown docs** — keep human-readable documentation in sync
-  with the map automatically.
+  with the map automatically;
+- **diff two maps** — see exactly what changed between two revisions of a
+  device manual before touching gateway configs or firmware.
 
 Pure Python 3.8+ standard library. No dependencies, no build step.
 
@@ -63,7 +65,25 @@ python modbus_regmap.py gen-c examples/registers.csv --prefix METER -o src/regis
 
 # generate Markdown documentation
 python modbus_regmap.py gen-doc examples/registers.csv -o docs/registers.md
+
+# compare two revisions of a map (exit code 1 when they differ)
+python modbus_regmap.py diff old/registers.csv new/registers.csv
+python modbus_regmap.py diff old/registers.csv new/registers.csv --json
 ```
+
+Example `diff` output:
+
+```text
+added (1):
+  + energy_total @ 10 (uint32, ro, kWh)
+changed (1):
+  ~ grid_voltage @ 0: type uint16 -> int16
+unchanged: 7
+```
+
+`diff` matches registers by name and reports added, removed and changed
+entries; unchanged maps exit with code 0, any difference exits with 1, so
+it drops straight into CI pipelines or pre-commit checks.
 
 Example C output:
 

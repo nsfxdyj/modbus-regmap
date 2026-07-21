@@ -36,6 +36,16 @@ name,address,type,access,unit,description
 a,0,double,ro,,
 """
 
+#: same registers as GOOD_CSV, but power's unit and mode's address changed,
+#: plus one extra register — used for diff tests
+REVISED_CSV = """\
+name,address,type,access,unit,description
+voltage,0,uint16,ro,V,Phase voltage
+power,1,int32,ro,kW,Active power
+mode,4,uint16,rw,,Operating mode
+energy,8,uint32,ro,kWh,Total energy
+"""
+
 
 def write_tmp(text: str) -> str:
     fh = tempfile.NamedTemporaryFile(
@@ -109,6 +119,53 @@ class TestExport(unittest.TestCase):
         self.assertIn("# Modbus Register Map", doc)
 
 
+class TestDiff(unittest.TestCase):
+    def setUp(self):
+        self.old = mrm.load_register_map(write_tmp(GOOD_CSV))
+        self.new = mrm.load_register_map(write_tmp(REVISED_CSV))
+
+    def test_identical_maps(self):
+        diff = mrm.diff_maps(self.old, self.old)
+        self.assertTrue(diff.identical)
+        self.assertEqual(diff.unchanged, 3)
+        self.assertIn("no differences", diff.to_text())
+
+    def test_added_and_changed(self):
+        diff = mrm.diff_maps(self.old, self.new)
+        self.assertFalse(diff.identical)
+        self.assertEqual([r.name for r in diff.added], ["energy"])
+        self.assertEqual(diff.removed, [])
+        changed = {c.name: c.fields for c in diff.changed}
+        self.assertEqual(changed["power"], ["unit: W -> kW"])
+        self.assertEqual(changed["mode"], ["address: 3 -> 4"])
+        self.assertEqual(diff.unchanged, 1)  # voltage
+
+    def test_removed(self):
+        one_reg = mrm.load_register_map(
+            write_tmp(
+                "name,address,type,access,unit,description\n"
+                "voltage,0,uint16,ro,V,Phase voltage\n"
+            )
+        )
+        diff = mrm.diff_maps(self.old, one_reg)
+        self.assertEqual(sorted(r.name for r in diff.removed), ["mode", "power"])
+        self.assertEqual(diff.added, [])
+
+    def test_text_output(self):
+        text = mrm.diff_maps(self.old, self.new).to_text()
+        self.assertIn("added (1):", text)
+        self.assertIn("+ energy @ 8 (uint32, ro, kWh)", text)
+        self.assertIn("~ power @ 1: unit: W -> kW", text)
+        self.assertIn("unchanged: 1", text)
+
+    def test_json_output(self):
+        data = json.loads(mrm.diff_maps(self.old, self.new).to_json())
+        self.assertFalse(data["identical"])
+        self.assertEqual(data["added"][0]["name"], "energy")
+        self.assertEqual(data["changed"][0]["changes"], ["unit: W -> kW"])
+        self.assertEqual(data["unchanged"], 1)
+
+
 class TestCli(unittest.TestCase):
     def test_validate_ok(self):
         self.assertEqual(mrm.main(["validate", str(EXAMPLE)]), 0)
@@ -122,6 +179,16 @@ class TestCli(unittest.TestCase):
             out = Path(tmp) / "map.json"
             self.assertEqual(mrm.main(["json", str(EXAMPLE), "-o", str(out)]), 0)
             self.assertEqual(json.loads(out.read_text())["count"], 8)
+
+    def test_diff_identical_exits_0(self):
+        path = write_tmp(GOOD_CSV)
+        self.assertEqual(mrm.main(["diff", path, path]), 0)
+
+    def test_diff_different_exits_1(self):
+        old_path = write_tmp(GOOD_CSV)
+        new_path = write_tmp(REVISED_CSV)
+        self.assertEqual(mrm.main(["diff", old_path, new_path]), 1)
+        self.assertEqual(mrm.main(["diff", old_path, new_path, "--json"]), 1)
 
 
 if __name__ == "__main__":
