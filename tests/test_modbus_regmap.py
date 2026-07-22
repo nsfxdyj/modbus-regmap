@@ -1,5 +1,7 @@
 """Tests for modbus_regmap. Run: python -m unittest discover -s tests -v"""
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -166,6 +168,41 @@ class TestDiff(unittest.TestCase):
         self.assertEqual(data["unchanged"], 1)
 
 
+class TestGaps(unittest.TestCase):
+    def setUp(self):
+        # GOOD_CSV occupies address 0, span 1-2 (int32) and address 3
+        self.regmap = mrm.load_register_map(write_tmp(GOOD_CSV))
+
+    def test_free_ranges_default_window(self):
+        self.assertEqual(self.regmap.free_ranges(), [(4, mrm.MAX_ADDRESS)])
+
+    def test_free_ranges_narrow_window(self):
+        self.assertEqual(self.regmap.free_ranges(0, 10), [(4, 10)])
+
+    def test_free_ranges_window_inside_span(self):
+        # window 2-3 starts inside power's int32 span (1-2)
+        self.assertEqual(self.regmap.free_ranges(2, 3), [])
+
+    def test_single_register_gap(self):
+        regmap = mrm.RegisterMap(
+            registers=[
+                mrm.Register(name="a", address=0, type="uint16", access="ro"),
+                mrm.Register(name="b", address=2, type="uint16", access="ro"),
+            ]
+        )
+        self.assertEqual(regmap.free_ranges(0, 2), [(1, 1)])
+
+    def test_empty_map(self):
+        self.assertEqual(mrm.RegisterMap().free_ranges(10, 12), [(10, 12)])
+
+    def test_example_map_gaps(self):
+        regmap = mrm.load_register_map(EXAMPLE)
+        self.assertEqual(
+            regmap.free_ranges(0, 25),
+            [(6, 7), (9, 15), (19, 19), (21, 25)],
+        )
+
+
 class TestCli(unittest.TestCase):
     def test_validate_ok(self):
         self.assertEqual(mrm.main(["validate", str(EXAMPLE)]), 0)
@@ -189,6 +226,31 @@ class TestCli(unittest.TestCase):
         new_path = write_tmp(REVISED_CSV)
         self.assertEqual(mrm.main(["diff", old_path, new_path]), 1)
         self.assertEqual(mrm.main(["diff", old_path, new_path, "--json"]), 1)
+
+    def test_gaps_exits_0(self):
+        self.assertEqual(mrm.main(["gaps", str(EXAMPLE)]), 0)
+
+    def test_gaps_bad_window_exits_2(self):
+        self.assertEqual(
+            mrm.main(["gaps", str(EXAMPLE), "--from", "10", "--to", "5"]), 2
+        )
+
+    def test_gaps_output(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            mrm.main(["gaps", str(EXAMPLE), "--from", "0", "--to", "25"])
+        out = buf.getvalue()
+        self.assertIn("6-7 (2 registers)", out)
+        self.assertIn("  19 (1 register)", out)
+        self.assertIn("total free: 15 registers", out)
+
+    def test_gaps_full_window_output(self):
+        # every address in the window is occupied
+        regmap_csv = write_tmp(GOOD_CSV)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            mrm.main(["gaps", regmap_csv, "--from", "0", "--to", "3"])
+        self.assertIn("no free addresses in range 0-3", buf.getvalue())
 
 
 if __name__ == "__main__":
