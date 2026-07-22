@@ -13,7 +13,9 @@ lets you keep that table as a single CSV file under version control, then:
 - **generate Markdown docs** — keep human-readable documentation in sync
   with the map automatically;
 - **diff two maps** — see exactly what changed between two revisions of a
-  device manual before touching gateway configs or firmware.
+  device manual before touching gateway configs or firmware;
+- **find free address ranges** — spot where new registers can go when a
+  device manual gets extended.
 
 Pure Python 3.8+ standard library. No dependencies, no build step.
 
@@ -69,6 +71,9 @@ python modbus_regmap.py gen-doc examples/registers.csv -o docs/registers.md
 # compare two revisions of a map (exit code 1 when they differ)
 python modbus_regmap.py diff old/registers.csv new/registers.csv
 python modbus_regmap.py diff old/registers.csv new/registers.csv --json
+
+# list unused address ranges, e.g. before allocating new registers
+python modbus_regmap.py gaps examples/registers.csv --from 0 --to 100
 ```
 
 Example `diff` output:
@@ -84,6 +89,20 @@ unchanged: 7
 `diff` matches registers by name and reports added, removed and changed
 entries; unchanged maps exit with code 0, any difference exits with 1, so
 it drops straight into CI pipelines or pre-commit checks.
+
+Example `gaps` output:
+
+```text
+free address ranges in 0-100 (4):
+  6-7 (2 registers)
+  9-15 (7 registers)
+  19 (1 register)
+  21-100 (80 registers)
+total free: 90 registers
+```
+
+`gaps` accounts for 32-bit types occupying two registers, so a range is
+only reported when it is genuinely untouched by any value in the map.
 
 Example C output:
 
@@ -110,7 +129,8 @@ if not errors:
 python -m unittest discover -s tests -v
 ```
 
-CI runs the same test suite on every push and pull request.
+The suite covers both the library API and the CLI end to end; run it
+before committing.
 
 ## License
 
