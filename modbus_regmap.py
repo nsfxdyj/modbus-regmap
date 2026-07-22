@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 #: register width (number of 16-bit registers) per data type
 TYPE_WIDTHS = {
@@ -150,6 +150,32 @@ class RegisterMap:
                     f"({s1}-{e1} vs {s2}-{e2})"
                 )
         return errors
+
+    # ------------------------------------------------------------------ #
+    # analysis
+    # ------------------------------------------------------------------ #
+    def free_ranges(self, start: int = 0, end: int = MAX_ADDRESS) -> List[tuple]:
+        """Return the unused address ranges within [start, end], inclusive.
+
+        The result is a sorted list of (start, end) tuples. Spans lying
+        outside the window are clipped, and overlapping spans are merged
+        via the cursor, so the method stays usable even on maps that
+        fail validate().
+        """
+        free: List[tuple] = []
+        cursor = start
+        spans = sorted((r.address, r.end_address) for r in self.registers)
+        for span_start, span_end in spans:
+            if span_end < start or span_start > end:
+                continue  # register lies fully outside the window
+            if span_start > cursor:
+                free.append((cursor, span_start - 1))
+            cursor = max(cursor, span_end + 1)
+            if cursor > end:
+                return free
+        if cursor <= end:
+            free.append((cursor, end))
+        return free
 
     # ------------------------------------------------------------------ #
     # exporters
@@ -427,6 +453,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the diff as JSON instead of plain text",
     )
+
+    p_gaps = sub.add_parser("gaps", help="list unused address ranges of a map")
+    add_csv_arg(p_gaps)
+    p_gaps.add_argument(
+        "--from",
+        dest="start",
+        type=int,
+        default=0,
+        help="first address of the window to inspect (default: 0)",
+    )
+    p_gaps.add_argument(
+        "--to",
+        dest="end",
+        type=int,
+        default=MAX_ADDRESS,
+        help=f"last address of the window to inspect (default: {MAX_ADDRESS})",
+    )
     return parser
 
 
@@ -459,6 +502,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         _write_or_print(regmap.to_c_header(prefix=args.prefix), args.output)
     elif args.command == "gen-doc":
         _write_or_print(regmap.to_markdown(title=args.title), args.output)
+    elif args.command == "gaps":
+        if not 0 <= args.start <= args.end <= MAX_ADDRESS:
+            print(
+                f"error: window must satisfy 0 <= --from <= --to <= {MAX_ADDRESS}",
+                file=sys.stderr,
+            )
+            return 2
+        free = regmap.free_ranges(args.start, args.end)
+        if not free:
+            print(f"no free addresses in range {args.start}-{args.end}")
+            return 0
+        total_free = sum(e - s + 1 for s, e in free)
+        print(f"free address ranges in {args.start}-{args.end} ({len(free)}):")
+        for s, e in free:
+            width = e - s + 1
+            label = f"{s}" if s == e else f"{s}-{e}"
+            plural = "s" if width != 1 else ""
+            print(f"  {label} ({width} register{plural})")
+        print(f"total free: {total_free} registers")
     return 0
 
 
