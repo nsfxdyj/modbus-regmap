@@ -168,6 +168,42 @@ class TestDiff(unittest.TestCase):
         self.assertEqual(data["unchanged"], 1)
 
 
+class TestLookup(unittest.TestCase):
+    def setUp(self):
+        # GOOD_CSV: voltage @0, power @1-2 (int32), mode @3
+        self.regmap = mrm.load_register_map(write_tmp(GOOD_CSV))
+
+    def test_find_by_name(self):
+        self.assertEqual(self.regmap.find_by_name("power").address, 1)
+
+    def test_find_by_name_missing(self):
+        self.assertIsNone(self.regmap.find_by_name("nope"))
+
+    def test_find_by_address_first_word(self):
+        self.assertEqual(self.regmap.find_by_address(1).name, "power")
+
+    def test_find_by_address_second_word_of_32bit(self):
+        # address 2 is the second register of power's int32 span
+        self.assertEqual(self.regmap.find_by_address(2).name, "power")
+
+    def test_find_by_address_free(self):
+        self.assertIsNone(self.regmap.find_by_address(9))
+
+    def test_format_register(self):
+        text = mrm.format_register(self.regmap.find_by_name("power"))
+        self.assertIn("name:        power", text)
+        self.assertIn("address:     1", text)
+        self.assertIn("type:        int32 (2 registers)", text)
+        self.assertIn("unit:        W", text)
+
+    def test_format_register_omits_empty_fields(self):
+        text = mrm.format_register(self.regmap.find_by_name("voltage"))
+        self.assertIn("type:        uint16 (1 register)", text)
+        # GOOD_CSV voltage has a unit; mode has none
+        text = mrm.format_register(self.regmap.find_by_name("mode"))
+        self.assertNotIn("unit:", text)
+
+
 class TestGaps(unittest.TestCase):
     def setUp(self):
         # GOOD_CSV occupies address 0, span 1-2 (int32) and address 3
@@ -251,6 +287,32 @@ class TestCli(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             mrm.main(["gaps", regmap_csv, "--from", "0", "--to", "3"])
         self.assertIn("no free addresses in range 0-3", buf.getvalue())
+
+    def test_lookup_by_name(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = mrm.main(["lookup", str(EXAMPLE), "--name", "active_power"])
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("name:        active_power", out)
+        self.assertIn("address:     2", out)
+        self.assertIn("type:        int32 (2 registers)", out)
+
+    def test_lookup_by_hex_address_json(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = mrm.main(["lookup", str(EXAMPLE), "--address", "0x11", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(buf.getvalue())["name"], "setpoint_power")
+
+    def test_lookup_not_found_exits_1(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(
+                mrm.main(["lookup", str(EXAMPLE), "--name", "ghost"]), 1
+            )
+            self.assertEqual(
+                mrm.main(["lookup", str(EXAMPLE), "--address", "100"]), 1
+            )
 
 
 if __name__ == "__main__":
