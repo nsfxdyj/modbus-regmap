@@ -21,6 +21,13 @@ lets you keep that table as a single CSV file under version control, then:
 
 Pure Python 3.8+ standard library. No dependencies, no build step.
 
+## Screenshot
+
+Running `validate`, `lookup`, `gaps` and `gen-c` against
+`examples/registers.csv`:
+
+![modbus-regmap CLI in action](docs/screenshot.png)
+
 ## Install
 
 ```bash
@@ -152,7 +159,8 @@ python -m unittest discover -s tests -v
 ```
 
 The suite covers both the library API and the CLI end to end; run it
-before committing.
+before committing. GitHub Actions runs the same suite on every push and
+pull request across Python 3.8–3.12.
 
 ## License
 
