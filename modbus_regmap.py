@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 #: register width (number of 16-bit registers) per data type
 TYPE_WIDTHS = {
@@ -176,6 +176,27 @@ class RegisterMap:
         if cursor <= end:
             free.append((cursor, end))
         return free
+
+    # ------------------------------------------------------------------ #
+    # lookup
+    # ------------------------------------------------------------------ #
+    def find_by_name(self, name: str) -> Optional[Register]:
+        """Return the first register with exactly this name, or None."""
+        for reg in self.registers:
+            if reg.name == name:
+                return reg
+        return None
+
+    def find_by_address(self, address: int) -> Optional[Register]:
+        """Return the register whose span covers *address*, or None.
+
+        For 32-bit values both registers of the span match, so asking
+        for the second word of an int32 still finds the value.
+        """
+        for reg in self.registers:
+            if reg.address <= address <= reg.end_address:
+                return reg
+        return None
 
     # ------------------------------------------------------------------ #
     # exporters
@@ -347,6 +368,22 @@ def diff_maps(old: RegisterMap, new: RegisterMap) -> MapDiff:
 # ---------------------------------------------------------------------- #
 # loading
 # ---------------------------------------------------------------------- #
+def format_register(reg: Register) -> str:
+    """Human-readable detail block for one register (used by `lookup`)."""
+    width = f"{reg.width} register" + ("s" if reg.width != 1 else "")
+    lines = [
+        f"name:        {reg.name}",
+        f"address:     {reg.address}",
+        f"type:        {reg.type} ({width})",
+        f"access:      {reg.access}",
+    ]
+    if reg.unit:
+        lines.append(f"unit:        {reg.unit}")
+    if reg.description:
+        lines.append(f"description: {reg.description}")
+    return "\n".join(lines) + "\n"
+
+
 def load_register_map(path: str | Path) -> RegisterMap:
     """Load a CSV register map from *path*.
 
@@ -470,6 +507,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=MAX_ADDRESS,
         help=f"last address of the window to inspect (default: {MAX_ADDRESS})",
     )
+
+    p_lookup = sub.add_parser("lookup", help="find a register by name or address")
+    add_csv_arg(p_lookup)
+    which = p_lookup.add_mutually_exclusive_group(required=True)
+    which.add_argument("--name", help="exact register name to look up")
+    which.add_argument(
+        "--address",
+        type=lambda s: int(s, 0),
+        metavar="ADDR",
+        help="register address (decimal or 0x…); an address inside a "
+        "multi-register value still matches that value",
+    )
+    p_lookup.add_argument(
+        "--json",
+        action="store_true",
+        help="print the register as JSON instead of plain text",
+    )
     return parser
 
 
@@ -485,6 +539,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0 if diff.identical else 1
 
     regmap = _load_or_exit(args.csv)
+
+    if args.command == "lookup":
+        # like diff, lookup is an inspection tool: it works even on maps
+        # that would fail validate()
+        if args.name is not None:
+            reg = regmap.find_by_name(args.name)
+            query = f"name '{args.name}'"
+        else:
+            reg = regmap.find_by_address(args.address)
+            query = f"address {args.address}"
+        if reg is None:
+            print(f"not found: no register matching {query}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(reg.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(format_register(reg), end="")
+        return 0
 
     if args.command == "validate":
         errors = regmap.validate()

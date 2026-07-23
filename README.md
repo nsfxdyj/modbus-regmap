@@ -15,7 +15,9 @@ lets you keep that table as a single CSV file under version control, then:
 - **diff two maps** — see exactly what changed between two revisions of a
   device manual before touching gateway configs or firmware;
 - **find free address ranges** — spot where new registers can go when a
-  device manual gets extended.
+  device manual gets extended;
+- **look up a register** — answer "what is at address 0x11?" or "which
+  address is `energy_total`?" straight from the map.
 
 Pure Python 3.8+ standard library. No dependencies, no build step.
 
@@ -74,7 +76,27 @@ python modbus_regmap.py diff old/registers.csv new/registers.csv --json
 
 # list unused address ranges, e.g. before allocating new registers
 python modbus_regmap.py gaps examples/registers.csv --from 0 --to 100
+
+# find a register by name or by address (hex works too)
+python modbus_regmap.py lookup examples/registers.csv --name active_power
+python modbus_regmap.py lookup examples/registers.csv --address 0x11 --json
 ```
+
+Example `lookup` output:
+
+```text
+name:        active_power
+address:     2
+type:        int32 (2 registers)
+access:      ro
+unit:        W
+description: Instantaneous active power
+```
+
+`lookup --address` matches any address covered by a value, so asking for
+the second register of a 32-bit value still finds it; nothing found exits
+with code 1. Like `diff`, `lookup` works on maps that would fail
+`validate`, which makes it handy for inspecting a broken map.
 
 Example `diff` output:
 
