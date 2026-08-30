@@ -21,6 +21,18 @@ lets you keep that table as a single CSV file under version control, then:
 
 Pure Python 3.8+ standard library. No dependencies, no build step.
 
+## Who this is for
+
+If you integrate Modbus devices — gateways, SCADA, test rigs, firmware —
+the register table is the contract everything else depends on, and it
+usually lives in a PDF manual plus three stale spreadsheets. Keeping it
+as one CSV under version control means the gateway config, the firmware
+header and the customer-facing documentation can never silently
+disagree: regenerate them from the same source, diff map revisions in
+code review, and let CI reject an overlapping address before it ships.
+This is how the tool has been used across 500+ device configurations in
+production.
+
 ## Screenshot
 
 Running `validate`, `lookup`, `gaps` and `gen-c` against
@@ -161,6 +173,13 @@ python -m unittest discover -s tests -v
 The suite covers both the library API and the CLI end to end; run it
 before committing. GitHub Actions runs the same suite on every push and
 pull request across Python 3.8–3.12.
+
+## Custom work
+
+Need a variant of this workflow — a different input format, a generator
+for another target language, or register-map validation wired into your
+CI? That's the kind of tooling I build on commission:
+nsfxdyj@gmail.com
 
 ## License
 
