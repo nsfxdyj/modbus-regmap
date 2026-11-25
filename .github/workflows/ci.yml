@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Smoke test the example CLI
+        shell: python
+        run: |
+          import json
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          example = "examples/registers.csv"
+          with tempfile.TemporaryDirectory() as tmp:
+              tmp = Path(tmp)
+              json_output = tmp / "registers.json"
+              header_output = tmp / "registers.h"
+              docs_output = tmp / "registers.md"
+              commands = [
+                  ["validate", example],
+                  ["json", example, "-o", str(json_output)],
+                  ["gen-c", example, "--prefix", "METER", "-o", str(header_output)],
+                  ["gen-doc", example, "-o", str(docs_output)],
+                  ["gaps", example, "--from", "0", "--to", "100"],
+                  ["lookup", example, "--name", "active_power"],
+                  ["diff", example, example],
+              ]
+              for arguments in commands:
+                  subprocess.run([sys.executable, "modbus_regmap.py", *arguments], check=True)
+
+              payload = json.loads(json_output.read_text(encoding="utf-8"))
+              assert payload["count"] == 8
+              assert len(payload["registers"]) == 8
+              assert "#define METER_" in header_output.read_text(encoding="utf-8")
+              assert "active_power" in docs_output.read_text(encoding="utf-8")
+          print("CLI smoke passed: validate/json/gen-c/gen-doc/gaps/lookup/diff")
