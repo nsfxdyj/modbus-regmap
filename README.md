@@ -172,7 +172,8 @@ python -m unittest discover -s tests -v
 
 The suite covers both the library API and the CLI end to end; run it
 before committing. GitHub Actions runs the same suite on every push and
-pull request across Python 3.8–3.12.
+pull request across Python 3.8–3.12, then smoke-tests the example CLI on
+Ubuntu 22.04.
 
 ## Custom work
 
